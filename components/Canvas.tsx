@@ -169,7 +169,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         onWheel={handleWheel}
       />
       
-      {/* Zoom controls */}
+      {/* Controls */}
       <div className="absolute bottom-4 right-4 flex gap-2">
         <button
           onClick={() => setScale(prev => Math.max(2, prev - 2))}
@@ -185,6 +185,22 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
           className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded text-white text-xl"
         >
           +
+        </button>
+        <button
+          onClick={() => {
+            const container = containerRef.current
+            if (container) {
+              if (document.fullscreenElement) {
+                document.exitFullscreen()
+              } else {
+                container.requestFullscreen()
+              }
+            }
+          }}
+          className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded text-white text-sm"
+          title="Fullscreen"
+        >
+          ⛶
         </button>
       </div>
 
