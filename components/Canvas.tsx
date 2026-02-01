@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from '@/lib/constants'
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/constants'
 
 interface Pixel {
   x: number
@@ -25,6 +25,25 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [hoveredPixel, setHoveredPixel] = useState<{ x: number; y: number } | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
+  const mousePos = useRef({ x: 0, y: 0 })
+
+  // Update canvas size on fullscreen change
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFs = !!document.fullscreenElement
+      setIsFullscreen(isFs)
+      if (isFs && containerRef.current) {
+        setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
+      } else {
+        setCanvasSize({ width: 800, height: 600 })
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
 
   // Create pixel map for quick lookup
   const pixelMap = useCallback(() => {
@@ -45,12 +64,8 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const pixelSize = scale
 
     // Clear canvas
-    ctx.fillStyle = '#FFFFFF'
+    ctx.fillStyle = '#1a1a2e'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Draw grid background
-    ctx.strokeStyle = '#E5E5E5'
-    ctx.lineWidth = 0.5
 
     // Draw pixels
     for (let x = 0; x < CANVAS_WIDTH; x++) {
@@ -67,6 +82,8 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
 
           // Draw grid lines at higher zoom levels
           if (scale >= 8) {
+            ctx.strokeStyle = '#333'
+            ctx.lineWidth = 0.5
             ctx.strokeRect(drawX, drawY, pixelSize, pixelSize)
           }
         }
@@ -83,7 +100,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       ctx.fillStyle = selectedColor + '80'
       ctx.fillRect(hx, hy, pixelSize, pixelSize)
     }
-  }, [pixels, scale, offset, hoveredPixel, selectedColor, cooldownActive, pixelMap])
+  }, [pixels, scale, offset, hoveredPixel, selectedColor, cooldownActive, pixelMap, canvasSize])
 
   // Handle mouse events
   const getPixelCoords = (e: React.MouseEvent) => {
@@ -101,13 +118,18 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Left click (0), middle click (1), or right click (2) to drag
     setIsDragging(true)
     setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
     e.preventDefault()
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    mousePos.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+
     if (isDragging) {
       setOffset({
         x: e.clientX - dragStart.x,
@@ -130,37 +152,71 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     }
   }
 
-  const handleWheel = (e: React.WheelEvent) => {
+  // Zoom towards mouse position
+  const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
     e.stopPropagation()
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left
+    const mouseY = e.clientY - rect.top
+
+    // Calculate the pixel position under the mouse before zoom
+    const pixelX = (mouseX - offset.x) / scale
+    const pixelY = (mouseY - offset.y) / scale
+
+    // Calculate new scale
     const delta = e.deltaY > 0 ? -1 : 1
-    setScale(prev => Math.max(2, Math.min(32, prev + delta)))
-  }
+    const newScale = Math.max(1, Math.min(32, scale + delta))
+
+    if (newScale !== scale) {
+      // Calculate new offset to keep the same pixel under the mouse
+      const newOffsetX = mouseX - pixelX * newScale
+      const newOffsetY = mouseY - pixelY * newScale
+
+      setScale(newScale)
+      setOffset({ x: newOffsetX, y: newOffsetY })
+    }
+  }, [scale, offset])
 
   // Prevent page scroll when mouse is over canvas
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const container = containerRef.current
+    if (!container) return
 
     const preventScroll = (e: WheelEvent) => {
       e.preventDefault()
     }
 
-    canvas.addEventListener('wheel', preventScroll, { passive: false })
-    return () => canvas.removeEventListener('wheel', preventScroll)
+    container.addEventListener('wheel', preventScroll, { passive: false })
+    return () => container.removeEventListener('wheel', preventScroll)
   }, [])
+
+  const toggleFullscreen = () => {
+    const container = containerRef.current
+    if (!container) return
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      container.requestFullscreen()
+    }
+  }
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[600px] overflow-hidden bg-gray-900 rounded-lg border border-gray-700"
+      className={`relative overflow-hidden bg-gray-900 rounded-lg border border-gray-700 ${isFullscreen ? 'w-screen h-screen' : 'w-full h-[600px]'}`}
       onContextMenu={e => e.preventDefault()}
     >
       <canvas
         ref={canvasRef}
-        width={800}
-        height={600}
-        className="cursor-crosshair"
+        width={canvasSize.width}
+        height={canvasSize.height}
+        className="cursor-grab active:cursor-grabbing"
         onClick={handleClick}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -172,44 +228,63 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       {/* Controls */}
       <div className="absolute bottom-4 right-4 flex gap-2">
         <button
-          onClick={() => setScale(prev => Math.max(2, prev - 2))}
-          className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded text-white text-xl"
+          onClick={() => {
+            const newScale = Math.max(1, scale - 2)
+            // Zoom towards center
+            const centerX = canvasSize.width / 2
+            const centerY = canvasSize.height / 2
+            const pixelX = (centerX - offset.x) / scale
+            const pixelY = (centerY - offset.y) / scale
+            setOffset({
+              x: centerX - pixelX * newScale,
+              y: centerY - pixelY * newScale
+            })
+            setScale(newScale)
+          }}
+          className="w-10 h-10 bg-gray-800 hover:bg-gray-700 rounded text-white text-xl font-bold"
         >
-          -
+          −
         </button>
-        <span className="w-12 h-8 bg-gray-800 rounded text-white text-sm flex items-center justify-center">
+        <span className="w-14 h-10 bg-gray-800 rounded text-white text-sm flex items-center justify-center font-mono">
           {scale}x
         </span>
         <button
-          onClick={() => setScale(prev => Math.min(32, prev + 2))}
-          className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded text-white text-xl"
+          onClick={() => {
+            const newScale = Math.min(32, scale + 2)
+            const centerX = canvasSize.width / 2
+            const centerY = canvasSize.height / 2
+            const pixelX = (centerX - offset.x) / scale
+            const pixelY = (centerY - offset.y) / scale
+            setOffset({
+              x: centerX - pixelX * newScale,
+              y: centerY - pixelY * newScale
+            })
+            setScale(newScale)
+          }}
+          className="w-10 h-10 bg-gray-800 hover:bg-gray-700 rounded text-white text-xl font-bold"
         >
           +
         </button>
         <button
-          onClick={() => {
-            const container = containerRef.current
-            if (container) {
-              if (document.fullscreenElement) {
-                document.exitFullscreen()
-              } else {
-                container.requestFullscreen()
-              }
-            }
-          }}
-          className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded text-white text-sm"
-          title="Fullscreen"
+          onClick={toggleFullscreen}
+          className="w-10 h-10 bg-gray-800 hover:bg-gray-700 rounded text-white text-lg"
+          title="Fullscreen (F)"
         >
-          ⛶
+          {isFullscreen ? '✕' : '⛶'}
         </button>
       </div>
 
       {/* Coordinates display */}
       {hoveredPixel && (
-        <div className="absolute top-4 left-4 px-2 py-1 bg-gray-800 rounded text-white text-sm">
+        <div className="absolute top-4 left-4 px-3 py-1.5 bg-gray-800/90 rounded text-white text-sm font-mono">
           ({hoveredPixel.x}, {hoveredPixel.y})
         </div>
       )}
+
+      {/* Help text */}
+      <div className="absolute bottom-4 left-4 text-gray-500 text-xs">
+        Scroll to zoom • Drag to pan
+      </div>
     </div>
   )
 }
