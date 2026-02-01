@@ -42,8 +42,9 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         if (!initialized) {
           const centerX = CANVAS_WIDTH / 2
           const centerY = CANVAS_HEIGHT / 2
-          const initialScale = Math.max(1, Math.min(newWidth, newHeight) / CANVAS_WIDTH)
-          setScale(Math.floor(initialScale))
+          // Start at scale 2 minimum for visibility
+          const initialScale = Math.max(2, Math.floor(Math.min(newWidth, newHeight) / CANVAS_WIDTH * 2))
+          setScale(initialScale)
           setOffset({
             x: newWidth / 2 - centerX * initialScale,
             y: newHeight / 2 - centerY * initialScale
@@ -212,9 +213,15 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         const pixelX = (touchX - offset.x) / scale
         const pixelY = (touchY - offset.y) / scale
 
-        // Calculate new scale based on pinch delta
+        // Calculate new scale based on pinch delta (more sensitive)
         const zoomFactor = newDist / lastTouchRef.current.dist
-        const newScale = Math.max(1, Math.min(32, Math.round(scale * zoomFactor)))
+        // Use floor/ceil based on direction for more responsive feel
+        let newScale: number
+        if (zoomFactor > 1) {
+          newScale = Math.min(32, Math.ceil(scale * zoomFactor))
+        } else {
+          newScale = Math.max(1, Math.floor(scale * zoomFactor))
+        }
 
         if (newScale !== scale) {
           // Recalculate offset to keep same point under fingers
