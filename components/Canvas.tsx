@@ -132,9 +132,23 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const delta = e.deltaY > 0 ? -1 : 1
     setScale(prev => Math.max(2, Math.min(32, prev + delta)))
   }
+
+  // Prevent page scroll when mouse is over canvas
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const preventScroll = (e: WheelEvent) => {
+      e.preventDefault()
+    }
+
+    canvas.addEventListener('wheel', preventScroll, { passive: false })
+    return () => canvas.removeEventListener('wheel', preventScroll)
+  }, [])
 
   return (
     <div
