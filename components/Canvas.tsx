@@ -220,7 +220,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         if (zoomFactor > 1) {
           newScale = Math.min(32, Math.ceil(scale * zoomFactor))
         } else {
-          newScale = Math.max(1, Math.floor(scale * zoomFactor))
+          newScale = Math.max(2, Math.floor(scale * zoomFactor))
         }
 
         if (newScale !== scale) {
@@ -259,7 +259,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const pixelY = (mouseY - offset.y) / scale
 
     const delta = e.deltaY > 0 ? -1 : 1
-    const newScale = Math.max(1, Math.min(32, scale + delta))
+    const newScale = Math.max(2, Math.min(32, scale + delta))
 
     if (newScale !== scale) {
       setScale(newScale)
@@ -333,7 +333,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       <div className="absolute bottom-4 right-4 flex gap-2">
         <button
           onClick={() => {
-            const newScale = Math.max(1, scale - 1)
+            const newScale = Math.max(2, scale - 1)
             const centerX = canvasSize.width / 2
             const centerY = canvasSize.height / 2
             const pixelX = (centerX - offset.x) / scale
