@@ -37,7 +37,7 @@ export default function CooldownTimer({ canPlaceAt, onCooldownEnd }: CooldownTim
   if (secondsRemaining <= 0) {
     return (
       <div className="px-4 py-2 bg-green-600 rounded-lg text-white font-medium">
-        ✓ Ready to place!
+        ✓ Ready to place! (1 min cooldown)
       </div>
     )
   }

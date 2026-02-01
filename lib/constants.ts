@@ -1,7 +1,7 @@
 // Canvas configuration
-export const CANVAS_WIDTH = 100
-export const CANVAS_HEIGHT = 100
-export const COOLDOWN_SECONDS = 300 // 5 minutes
+export const CANVAS_WIDTH = 250
+export const CANVAS_HEIGHT = 250
+export const COOLDOWN_SECONDS = 60 // 1 minute
 
 // Color palette (16 colors like r/place)
 export const COLORS = [
