@@ -101,10 +101,10 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 1 || e.button === 2) {
-      setIsDragging(true)
-      setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
-    }
+    // Left click (0), middle click (1), or right click (2) to drag
+    setIsDragging(true)
+    setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
+    e.preventDefault()
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
