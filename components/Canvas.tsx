@@ -27,6 +27,19 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   const [hoveredPixel, setHoveredPixel] = useState<{ x: number; y: number } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 })
+  
+  // Resize canvas to fit container
+  useEffect(() => {
+    const updateSize = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect()
+        setCanvasSize({ width: rect.width, height: rect.height })
+      }
+    }
+    updateSize()
+    window.addEventListener('resize', updateSize)
+    return () => window.removeEventListener('resize', updateSize)
+  }, [])
   const mousePos = useRef({ x: 0, y: 0 })
 
   // Update canvas size on fullscreen change
@@ -209,7 +222,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   return (
     <div
       ref={containerRef}
-      className={`relative overflow-hidden bg-gray-900 rounded-lg border border-gray-700 ${isFullscreen ? 'w-screen h-screen' : 'w-full h-[600px]'}`}
+      className={`relative overflow-hidden bg-gray-900 ${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'}`}
       onContextMenu={e => e.preventDefault()}
     >
       <canvas
