@@ -205,19 +205,25 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       const canvas = canvasRef.current
       if (canvas) {
         const rect = canvas.getBoundingClientRect()
-        const mouseX = centerX - rect.left
-        const mouseY = centerY - rect.top
-        const pixelX = (mouseX - offset.x) / scale
-        const pixelY = (mouseY - offset.y) / scale
+        const touchX = centerX - rect.left
+        const touchY = centerY - rect.top
+        
+        // Calculate pixel position before zoom
+        const pixelX = (touchX - offset.x) / scale
+        const pixelY = (touchY - offset.y) / scale
 
-        const scaleDelta = (newDist - lastTouchRef.current.dist) / 100
-        const newScale = Math.max(1, Math.min(32, scale + scaleDelta))
+        // Calculate new scale based on pinch delta
+        const zoomFactor = newDist / lastTouchRef.current.dist
+        const newScale = Math.max(1, Math.min(32, Math.round(scale * zoomFactor)))
 
-        setScale(Math.round(newScale))
-        setOffset({
-          x: mouseX - pixelX * newScale,
-          y: mouseY - pixelY * newScale
-        })
+        if (newScale !== scale) {
+          // Recalculate offset to keep same point under fingers
+          const newOffsetX = touchX - pixelX * newScale
+          const newOffsetY = touchY - pixelY * newScale
+          
+          setScale(newScale)
+          setOffset({ x: newOffsetX, y: newOffsetY })
+        }
       }
 
       lastTouchRef.current = { x: centerX, y: centerY, dist: newDist }
