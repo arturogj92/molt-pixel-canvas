@@ -22,25 +22,37 @@ export async function GET(
     const endX = startX + TILE_SIZE - 1
     const endY = startY + TILE_SIZE - 1
 
-    // Fetch pixels for this tile
-    const { data: pixels, error } = await supabaseAdmin
-      .from('pixels')
-      .select('x, y, color')
-      .gte('x', startX)
-      .lte('x', endX)
-      .gte('y', startY)
-      .lte('y', endY)
+    // Fetch all pixels for this tile (paginated to handle >1000)
+    const allPixels: any[] = []
+    let offset = 0
+    const CHUNK = 10000
+    
+    while (true) {
+      const { data: pixels, error } = await supabaseAdmin
+        .from('pixels')
+        .select('x, y, color')
+        .gte('x', startX)
+        .lte('x', endX)
+        .gte('y', startY)
+        .lte('y', endY)
+        .range(offset, offset + CHUNK - 1)
 
-    if (error) {
-      console.error('Tile fetch error:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        console.error('Tile fetch error:', error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+      
+      if (!pixels || pixels.length === 0) break
+      allPixels.push(...pixels)
+      if (pixels.length < CHUNK) break
+      offset += pixels.length
     }
 
     // Convert to compact format with local coordinates
     const colorMap = new Map(COLORS.map((c, i) => [c, i]))
     let compact = ''
     
-    for (const p of (pixels || [])) {
+    for (const p of allPixels) {
       const localX = p.x - startX
       const localY = p.y - startY
       const colorIdx = colorMap.get(p.color) ?? 0
