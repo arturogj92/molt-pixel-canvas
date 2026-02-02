@@ -281,10 +281,11 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const pixelX = (mouseX - offset.x) / scale
     const pixelY = (mouseY - offset.y) / scale
 
-    const delta = e.deltaY > 0 ? -1 : 1
-    const newScale = Math.max(2, Math.min(32, scale + delta))
+    // Smoother zoom: multiply by factor instead of adding
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
+    const newScale = Math.max(1, Math.min(50, scale * zoomFactor))
 
-    if (newScale !== scale) {
+    if (Math.abs(newScale - scale) > 0.01) {
       setScale(newScale)
       setOffset({
         x: mouseX - pixelX * newScale,
