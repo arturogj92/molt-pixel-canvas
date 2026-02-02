@@ -87,7 +87,7 @@ export default function Canvas() {
     }
   }, [])
 
-  // Calculate visible tiles and load them
+  // Calculate visible tiles and load them IN PARALLEL
   const loadVisibleTiles = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -98,18 +98,22 @@ export default function Canvas() {
     const visibleRight = Math.min(CANVAS_WIDTH, Math.ceil((canvas.width - offset.x) / scale))
     const visibleBottom = Math.min(CANVAS_HEIGHT, Math.ceil((canvas.height - offset.y) / scale))
 
-    // Calculate tile range
-    const tileLeft = Math.max(0, Math.floor(visibleLeft / TILE_SIZE))
-    const tileTop = Math.max(0, Math.floor(visibleTop / TILE_SIZE))
-    const tileRight = Math.min(TILES_X - 1, Math.floor(visibleRight / TILE_SIZE))
-    const tileBottom = Math.min(TILES_Y - 1, Math.floor(visibleBottom / TILE_SIZE))
+    // Calculate tile range (with 1 tile padding for smoother panning)
+    const tileLeft = Math.max(0, Math.floor(visibleLeft / TILE_SIZE) - 1)
+    const tileTop = Math.max(0, Math.floor(visibleTop / TILE_SIZE) - 1)
+    const tileRight = Math.min(TILES_X - 1, Math.floor(visibleRight / TILE_SIZE) + 1)
+    const tileBottom = Math.min(TILES_Y - 1, Math.floor(visibleBottom / TILE_SIZE) + 1)
 
-    // Load visible tiles
+    // Load ALL visible tiles in parallel
+    const tilesToLoad: Promise<void>[] = []
     for (let ty = tileTop; ty <= tileBottom; ty++) {
       for (let tx = tileLeft; tx <= tileRight; tx++) {
-        loadTile(tx, ty)
+        tilesToLoad.push(loadTile(tx, ty))
       }
     }
+    
+    // Wait for all to complete
+    Promise.all(tilesToLoad)
   }, [offset, scale, loadTile])
 
   // Load tiles when view changes
