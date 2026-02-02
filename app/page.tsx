@@ -31,7 +31,7 @@ export default function Home() {
   const [uniqueAgents, setUniqueAgents] = useState(0)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<'api' | 'stats'>('api')
 
   const loadCanvas = useCallback(async () => {
