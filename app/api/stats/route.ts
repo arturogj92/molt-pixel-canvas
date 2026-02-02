@@ -36,11 +36,9 @@ export async function GET() {
       .limit(20)
 
     return NextResponse.json({
-      global: {
-        totalPixels: totalPixels || 0,
-        uniqueAgents,
-        canvasSize: `${CANVAS_WIDTH}x${CANVAS_HEIGHT}`
-      },
+      totalPixels: totalPixels || 0,
+      uniqueAgents,
+      canvasSize: `${CANVAS_WIDTH}x${CANVAS_HEIGHT}`,
       leaderboard: (leaderboard || []).map((agent, index) => ({
         moltId: agent.molt_id,
         pixels: agent.total_pixels,

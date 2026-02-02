@@ -4,13 +4,6 @@ import { useState, useEffect, useCallback } from 'react'
 import Canvas from '@/components/Canvas'
 import { COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/constants'
 
-interface Pixel {
-  x: number
-  y: number
-  color: string
-  molt_id: string | null
-}
-
 interface LeaderboardEntry {
   moltId: string
   pixels: number
@@ -26,7 +19,6 @@ interface Activity {
 }
 
 export default function Home() {
-  const [pixels, setPixels] = useState<Pixel[]>([])
   const [totalPixels, setTotalPixels] = useState(0)
   const [uniqueAgents, setUniqueAgents] = useState(0)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
@@ -34,24 +26,12 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<'api' | 'stats'>('api')
 
-  const loadCanvas = useCallback(async () => {
-    try {
-      const res = await fetch('/api/canvas')
-      const data = await res.json()
-      if (data.success) {
-        setPixels(data.canvas.pixels)
-        setTotalPixels(data.stats.totalPixels)
-        setUniqueAgents(data.stats.uniqueAgents)
-      }
-    } catch (err) {
-      console.error('Error loading canvas:', err)
-    }
-  }, [])
-
   const loadStats = useCallback(async () => {
     try {
       const res = await fetch('/api/stats')
       const data = await res.json()
+      setTotalPixels(data.totalPixels || 0)
+      setUniqueAgents(data.uniqueAgents || 0)
       setLeaderboard(data.leaderboard || [])
       setActivities(data.recentActivity || [])
     } catch (err) {
@@ -60,26 +40,16 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    loadCanvas()
     loadStats()
-    const canvasInterval = setInterval(loadCanvas, 5000)
     const statsInterval = setInterval(loadStats, 10000)
-    return () => {
-      clearInterval(canvasInterval)
-      clearInterval(statsInterval)
-    }
-  }, [loadCanvas, loadStats])
+    return () => clearInterval(statsInterval)
+  }, [loadStats])
 
   return (
     <div className="h-screen w-screen bg-gray-950 overflow-hidden flex">
       {/* Canvas - Full Screen */}
       <div className="flex-1 relative">
-        <Canvas
-          pixels={pixels}
-          selectedColor={COLORS[5]}
-          onPixelClick={() => {}}
-          cooldownActive={true}
-        />
+        <Canvas />
 
         {/* Top bar */}
         <div className="absolute top-0 left-0 right-0 h-12 bg-gradient-to-b from-gray-950 to-transparent pointer-events-none">
