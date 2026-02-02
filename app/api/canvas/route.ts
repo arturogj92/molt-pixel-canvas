@@ -4,40 +4,49 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/constants'
 
 export async function GET() {
   try {
-    // Get all non-white pixels (sparse representation)
-    const { data: pixels, error } = await supabaseAdmin
-      .from('pixels')
-      .select('x, y, color, molt_id, updated_at')
-      .neq('color', '#FFFFFF')
-
-    if (error) {
-      console.error('Error fetching canvas:', error)
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 })
-    }
-
-    // Get stats
+    // Get count first
     const { count: totalPixels } = await supabaseAdmin
       .from('pixels')
       .select('*', { count: 'exact', head: true })
       .neq('color', '#FFFFFF')
 
-    const { data: uniqueAgentsData } = await supabaseAdmin
-      .from('pixels')
-      .select('molt_id')
-      .neq('color', '#FFFFFF')
-      .not('molt_id', 'is', null)
+    // Fetch all pixels in chunks (Supabase limits to 1000 per request)
+    const CHUNK_SIZE = 10000
+    const allPixels: any[] = []
+    let offset = 0
+    
+    while (offset < (totalPixels || 0)) {
+      const { data: chunk, error } = await supabaseAdmin
+        .from('pixels')
+        .select('x, y, color, molt_id')
+        .neq('color', '#FFFFFF')
+        .range(offset, offset + CHUNK_SIZE - 1)
+      
+      if (error) {
+        console.error('Error fetching chunk:', error)
+        break
+      }
+      
+      if (!chunk || chunk.length === 0) break
+      allPixels.push(...chunk)
+      offset += chunk.length
+      
+      // Safety limit
+      if (offset > 1100000) break
+    }
 
-    const uniqueAgents = new Set(uniqueAgentsData?.map(p => p.molt_id)).size
+    // Get unique agents
+    const uniqueAgents = new Set(allPixels.filter(p => p.molt_id).map(p => p.molt_id)).size
 
     return NextResponse.json({
       success: true,
       canvas: {
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
-        pixels: pixels || []
+        pixels: allPixels
       },
       stats: {
-        totalPixels: totalPixels || 0,
+        totalPixels: allPixels.length,
         uniqueAgents
       }
     })
