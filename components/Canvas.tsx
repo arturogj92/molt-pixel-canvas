@@ -1,13 +1,9 @@
 'use client'
 
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from '@/lib/constants'
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from '@/lib/constants'
 
-interface CanvasProps {
-  onStatsUpdate?: (total: number, agents: number) => void
-}
-
-export default function Canvas({ onStatsUpdate }: CanvasProps) {
+export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const offscreenRef = useRef<HTMLCanvasElement | null>(null)
@@ -22,6 +18,7 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
   const [canvasSize, setCanvasSize] = useState({ width: 400, height: 400 })
   const [initialized, setInitialized] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadProgress, setLoadProgress] = useState(0)
   const [lastUpdate, setLastUpdate] = useState(0)
 
   // Initialize offscreen canvas
@@ -40,40 +37,63 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     }
   }, [])
 
-  // Load canvas as image (much faster than JSON!)
-  const loadCanvasImage = useCallback(async () => {
+  // Load canvas from compact format
+  const loadCanvas = useCallback(async () => {
     const ctx = offscreenCtxRef.current
-    const offscreen = offscreenRef.current
-    if (!ctx || !offscreen) return
+    if (!ctx) return
 
     try {
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
+      setLoadProgress(0)
+      const res = await fetch(`/api/canvas/compact?t=${Date.now()}`)
+      const text = await res.text()
       
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => {
-          ctx.drawImage(img, 0, 0)
-          setLoading(false)
-          setLastUpdate(Date.now())
-          resolve()
+      if (!text || text.startsWith('{')) {
+        // Error or empty
+        setLoading(false)
+        return
+      }
+
+      // Clear to white first
+      ctx.fillStyle = '#FFFFFF'
+      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+
+      // Parse compact format: "x,y,colorIdx;x,y,colorIdx;..."
+      const pixels = text.split(';').filter(p => p)
+      const total = pixels.length
+      
+      // Process in chunks to not block UI
+      const CHUNK = 50000
+      for (let i = 0; i < pixels.length; i += CHUNK) {
+        const chunk = pixels.slice(i, i + CHUNK)
+        
+        for (const p of chunk) {
+          const [x, y, c] = p.split(',').map(Number)
+          if (!isNaN(x) && !isNaN(y) && !isNaN(c)) {
+            ctx.fillStyle = COLORS[c] || '#FFFFFF'
+            ctx.fillRect(x, y, 1, 1)
+          }
         }
-        img.onerror = reject
-        img.src = `/api/canvas/image?t=${Date.now()}`
-      })
-      
-      // Trigger re-render
+        
+        setLoadProgress(Math.min(100, Math.round((i + chunk.length) / total * 100)))
+        
+        // Yield to UI
+        await new Promise(r => setTimeout(r, 0))
+      }
+
+      setLoading(false)
       setLastUpdate(Date.now())
     } catch (err) {
-      console.error('Error loading canvas image:', err)
+      console.error('Error loading canvas:', err)
+      setLoading(false)
     }
   }, [])
 
   // Initial load + periodic refresh
   useEffect(() => {
-    loadCanvasImage()
-    const interval = setInterval(loadCanvasImage, 5000)
+    loadCanvas()
+    const interval = setInterval(loadCanvas, 10000) // Refresh every 10s
     return () => clearInterval(interval)
-  }, [loadCanvasImage])
+  }, [loadCanvas])
 
   // Resize handling
   useEffect(() => {
@@ -102,20 +122,18 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     return () => window.removeEventListener('resize', updateSize)
   }, [initialized])
 
-  // Fullscreen handling
+  // Fullscreen
   useEffect(() => {
-    const handleFullscreenChange = () => {
+    const handler = () => {
       const isFs = !!document.fullscreenElement
       setIsFullscreen(isFs)
-      if (isFs) {
-        setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
-      }
+      if (isFs) setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
     }
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('fullscreenchange', handler)
+    return () => document.removeEventListener('fullscreenchange', handler)
   }, [])
 
-  // RENDER: Draw offscreen canvas to visible canvas
+  // RENDER
   useEffect(() => {
     const canvas = canvasRef.current
     const offscreen = offscreenRef.current
@@ -125,12 +143,9 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     if (!ctx) return
 
     ctx.imageSmoothingEnabled = false
-
-    // Clear with background
     ctx.fillStyle = '#1a1a2e'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Calculate visible area
     const srcX = Math.max(0, Math.floor(-offset.x / scale))
     const srcY = Math.max(0, Math.floor(-offset.y / scale))
     const srcW = Math.min(CANVAS_WIDTH - srcX, Math.ceil(canvas.width / scale) + 2)
@@ -141,12 +156,10 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     const dstW = Math.floor(srcW * scale)
     const dstH = Math.floor(srcH * scale)
 
-    // Draw visible portion
     if (srcW > 0 && srcH > 0) {
       ctx.drawImage(offscreen, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH)
     }
 
-    // Grid at high zoom
     if (scale >= 10) {
       ctx.strokeStyle = 'rgba(0,0,0,0.15)'
       ctx.lineWidth = 1
@@ -164,7 +177,6 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
       ctx.stroke()
     }
 
-    // Hover indicator
     if (hoveredPixel) {
       const hx = Math.floor(hoveredPixel.x * scale + offset.x)
       const hy = Math.floor(hoveredPixel.y * scale + offset.y)
@@ -175,16 +187,13 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     }
   }, [scale, offset, hoveredPixel, canvasSize, lastUpdate])
 
-  // Mouse/touch handlers
   const getPixelCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     const x = Math.floor((clientX - rect.left - offset.x) / scale)
     const y = Math.floor((clientY - rect.top - offset.y) / scale)
-    if (x >= 0 && x < CANVAS_WIDTH && y >= 0 && y < CANVAS_HEIGHT) {
-      return { x, y }
-    }
+    if (x >= 0 && x < CANVAS_WIDTH && y >= 0 && y < CANVAS_HEIGHT) return { x, y }
     return null
   }
 
@@ -202,16 +211,12 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
     }
   }
 
-  const handleMouseUp = () => setIsDragging(false)
-
   const lastTouchRef = useRef<{ x: number; y: number; dist?: number } | null>(null)
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
-      const touch = e.touches[0]
-      lastTouchRef.current = { x: touch.clientX, y: touch.clientY }
       setIsDragging(true)
-      setDragStart({ x: touch.clientX - offset.x, y: touch.clientY - offset.y })
+      setDragStart({ x: e.touches[0].clientX - offset.x, y: e.touches[0].clientY - offset.y })
     } else if (e.touches.length === 2) {
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
@@ -226,15 +231,13 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 1 && isDragging) {
-      const touch = e.touches[0]
-      setOffset({ x: touch.clientX - dragStart.x, y: touch.clientY - dragStart.y })
+      setOffset({ x: e.touches[0].clientX - dragStart.x, y: e.touches[0].clientY - dragStart.y })
     } else if (e.touches.length === 2 && lastTouchRef.current?.dist) {
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
       const newDist = Math.hypot(dx, dy)
       const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2
       const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2
-
       const canvas = canvasRef.current
       if (canvas) {
         const rect = canvas.getBoundingClientRect()
@@ -242,83 +245,50 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
         const touchY = centerY - rect.top
         const pixelX = (touchX - offset.x) / scale
         const pixelY = (touchY - offset.y) / scale
-        const zoomFactor = newDist / lastTouchRef.current.dist
-        const newScale = Math.max(0.5, Math.min(100, scale * zoomFactor))
-
-        if (newScale !== scale) {
-          setScale(newScale)
-          setOffset({ x: touchX - pixelX * newScale, y: touchY - pixelY * newScale })
-        }
+        const newScale = Math.max(0.5, Math.min(100, scale * (newDist / lastTouchRef.current.dist)))
+        setScale(newScale)
+        setOffset({ x: touchX - pixelX * newScale, y: touchY - pixelY * newScale })
       }
       lastTouchRef.current = { x: centerX, y: centerY, dist: newDist }
     }
     e.preventDefault()
   }
 
-  const handleTouchEnd = () => {
-    setIsDragging(false)
-    lastTouchRef.current = null
-  }
-
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
-    e.stopPropagation()
-
     const canvas = canvasRef.current
     if (!canvas) return
-
     const rect = canvas.getBoundingClientRect()
     const mouseX = e.clientX - rect.left
     const mouseY = e.clientY - rect.top
     const pixelX = (mouseX - offset.x) / scale
     const pixelY = (mouseY - offset.y) / scale
-
-    const zoomFactor = e.deltaY > 0 ? 0.97 : 1.03
-    const newScale = Math.max(0.5, Math.min(100, scale * zoomFactor))
-
-    if (Math.abs(newScale - scale) > 0.001) {
-      setScale(newScale)
-      setOffset({ x: mouseX - pixelX * newScale, y: mouseY - pixelY * newScale })
-    }
+    const newScale = Math.max(0.5, Math.min(100, scale * (e.deltaY > 0 ? 0.97 : 1.03)))
+    setScale(newScale)
+    setOffset({ x: mouseX - pixelX * newScale, y: mouseY - pixelY * newScale })
   }, [scale, offset])
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const preventScroll = (e: WheelEvent | TouchEvent) => e.preventDefault()
-    container.addEventListener('wheel', preventScroll, { passive: false })
-    container.addEventListener('touchmove', preventScroll, { passive: false })
+    const prevent = (e: WheelEvent | TouchEvent) => e.preventDefault()
+    container.addEventListener('wheel', prevent, { passive: false })
+    container.addEventListener('touchmove', prevent, { passive: false })
     return () => {
-      container.removeEventListener('wheel', preventScroll)
-      container.removeEventListener('touchmove', preventScroll)
+      container.removeEventListener('wheel', prevent)
+      container.removeEventListener('touchmove', prevent)
     }
   }, [])
 
   const centerView = () => {
-    const centerX = CANVAS_WIDTH / 2
-    const centerY = CANVAS_HEIGHT / 2
     setOffset({
-      x: canvasSize.width / 2 - centerX * scale,
-      y: canvasSize.height / 2 - centerY * scale
+      x: canvasSize.width / 2 - (CANVAS_WIDTH / 2) * scale,
+      y: canvasSize.height / 2 - (CANVAS_HEIGHT / 2) * scale
     })
   }
 
-  const toggleFullscreen = () => {
-    const container = containerRef.current
-    if (!container) return
-    if (document.fullscreenElement) {
-      document.exitFullscreen()
-    } else {
-      container.requestFullscreen()
-    }
-  }
-
   return (
-    <div
-      ref={containerRef}
-      className={`relative overflow-hidden bg-gray-900 touch-none ${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'}`}
-      onContextMenu={e => e.preventDefault()}
-    >
+    <div ref={containerRef} className={`relative overflow-hidden bg-gray-900 touch-none ${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'}`} onContextMenu={e => e.preventDefault()}>
       <canvas
         ref={canvasRef}
         width={canvasSize.width}
@@ -327,67 +297,34 @@ export default function Canvas({ onStatsUpdate }: CanvasProps) {
         style={{ imageRendering: 'pixelated' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
+        onMouseUp={() => setIsDragging(false)}
         onMouseLeave={() => { setIsDragging(false); setHoveredPixel(null) }}
         onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+        onTouchEnd={() => { setIsDragging(false); lastTouchRef.current = null }}
       />
 
-      {/* Loading indicator */}
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80">
-          <div className="text-white text-lg">Loading canvas...</div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90">
+          <div className="text-white text-lg mb-4">Loading 1M pixels...</div>
+          <div className="w-64 h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-500 transition-all" style={{ width: `${loadProgress}%` }} />
+          </div>
+          <div className="text-gray-400 text-sm mt-2">{loadProgress}%</div>
         </div>
       )}
       
-      {/* Controls */}
       <div className="absolute bottom-4 right-4 flex gap-2">
-        <button
-          onClick={() => {
-            const newScale = Math.max(0.5, scale * 0.8)
-            const centerX = canvasSize.width / 2
-            const centerY = canvasSize.height / 2
-            const pixelX = (centerX - offset.x) / scale
-            const pixelY = (centerY - offset.y) / scale
-            setOffset({ x: centerX - pixelX * newScale, y: centerY - pixelY * newScale })
-            setScale(newScale)
-          }}
-          className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold"
-        >−</button>
-        <span className="w-16 h-12 bg-gray-800/90 rounded-lg text-white text-sm flex items-center justify-center font-mono">
-          {scale.toFixed(1)}x
-        </span>
-        <button
-          onClick={() => {
-            const newScale = Math.min(100, scale * 1.25)
-            const centerX = canvasSize.width / 2
-            const centerY = canvasSize.height / 2
-            const pixelX = (centerX - offset.x) / scale
-            const pixelY = (centerY - offset.y) / scale
-            setOffset({ x: centerX - pixelX * newScale, y: centerY - pixelY * newScale })
-            setScale(newScale)
-          }}
-          className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold"
-        >+</button>
-        <button onClick={centerView} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg" title="Center">⊙</button>
-        <button onClick={toggleFullscreen} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg hidden sm:flex items-center justify-center" title="Fullscreen">
-          {isFullscreen ? '✕' : '⛶'}
-        </button>
+        <button onClick={() => { const s = Math.max(0.5, scale * 0.8); const cx = canvasSize.width/2, cy = canvasSize.height/2; setOffset({x: cx - ((cx-offset.x)/scale)*s, y: cy - ((cy-offset.y)/scale)*s}); setScale(s) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">−</button>
+        <span className="w-16 h-12 bg-gray-800/90 rounded-lg text-white text-sm flex items-center justify-center font-mono">{scale.toFixed(1)}x</span>
+        <button onClick={() => { const s = Math.min(100, scale * 1.25); const cx = canvasSize.width/2, cy = canvasSize.height/2; setOffset({x: cx - ((cx-offset.x)/scale)*s, y: cy - ((cy-offset.y)/scale)*s}); setScale(s) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">+</button>
+        <button onClick={centerView} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg">⊙</button>
+        <button onClick={() => containerRef.current && (document.fullscreenElement ? document.exitFullscreen() : containerRef.current.requestFullscreen())} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg hidden sm:flex items-center justify-center">{isFullscreen ? '✕' : '⛶'}</button>
       </div>
 
-      {/* Coordinates */}
-      {hoveredPixel && (
-        <div className="absolute top-4 left-4 px-3 py-1.5 bg-gray-800/90 rounded text-white text-sm font-mono">
-          ({hoveredPixel.x}, {hoveredPixel.y})
-        </div>
-      )}
-
-      {/* Help */}
-      <div className="absolute bottom-4 left-4 text-gray-500 text-xs hidden sm:block">
-        Scroll to zoom • Drag to pan
-      </div>
+      {hoveredPixel && <div className="absolute top-4 left-4 px-3 py-1.5 bg-gray-800/90 rounded text-white text-sm font-mono">({hoveredPixel.x}, {hoveredPixel.y})</div>}
+      <div className="absolute bottom-4 left-4 text-gray-500 text-xs hidden sm:block">Scroll to zoom • Drag to pan</div>
     </div>
   )
 }
