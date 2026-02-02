@@ -79,7 +79,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     return map
   }, [pixels])
 
-  // Draw canvas
+  // Draw canvas - OPTIMIZED: only draw visible area + existing pixels
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -87,34 +87,57 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const map = pixelMap()
     const pixelSize = scale
 
-    // Clear canvas
+    // Clear with background
     ctx.fillStyle = '#1a1a2e'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw pixels
-    for (let x = 0; x < CANVAS_WIDTH; x++) {
-      for (let y = 0; y < CANVAS_HEIGHT; y++) {
-        const color = map.get(`${x},${y}`) || '#FFFFFF'
+    // Calculate visible bounds in pixel coordinates
+    const visibleMinX = Math.max(0, Math.floor(-offset.x / pixelSize))
+    const visibleMinY = Math.max(0, Math.floor(-offset.y / pixelSize))
+    const visibleMaxX = Math.min(CANVAS_WIDTH, Math.ceil((canvas.width - offset.x) / pixelSize))
+    const visibleMaxY = Math.min(CANVAS_HEIGHT, Math.ceil((canvas.height - offset.y) / pixelSize))
+
+    // Draw white base for visible area only
+    const baseX = visibleMinX * pixelSize + offset.x
+    const baseY = visibleMinY * pixelSize + offset.y
+    const baseW = (visibleMaxX - visibleMinX) * pixelSize
+    const baseH = (visibleMaxY - visibleMinY) * pixelSize
+    ctx.fillStyle = '#FFFFFF'
+    ctx.fillRect(baseX, baseY, baseW, baseH)
+
+    // Draw grid at high zoom (only visible area)
+    if (scale >= 8) {
+      ctx.strokeStyle = '#ddd'
+      ctx.lineWidth = 0.5
+      for (let x = visibleMinX; x <= visibleMaxX; x++) {
         const drawX = x * pixelSize + offset.x
-        const drawY = y * pixelSize + offset.y
-
-        // Only draw if visible
-        if (drawX + pixelSize >= 0 && drawX < canvas.width &&
-            drawY + pixelSize >= 0 && drawY < canvas.height) {
-          ctx.fillStyle = color
-          ctx.fillRect(drawX, drawY, pixelSize, pixelSize)
-
-          // Draw grid lines at higher zoom levels
-          if (scale >= 8) {
-            ctx.strokeStyle = '#333'
-            ctx.lineWidth = 0.5
-            ctx.strokeRect(drawX, drawY, pixelSize, pixelSize)
-          }
-        }
+        ctx.beginPath()
+        ctx.moveTo(drawX, baseY)
+        ctx.lineTo(drawX, baseY + baseH)
+        ctx.stroke()
       }
+      for (let y = visibleMinY; y <= visibleMaxY; y++) {
+        const drawY = y * pixelSize + offset.y
+        ctx.beginPath()
+        ctx.moveTo(baseX, drawY)
+        ctx.lineTo(baseX + baseW, drawY)
+        ctx.stroke()
+      }
+    }
+
+    // Draw only existing pixels (not 1M iterations!)
+    for (const pixel of pixels) {
+      const drawX = pixel.x * pixelSize + offset.x
+      const drawY = pixel.y * pixelSize + offset.y
+
+      // Skip if not visible
+      if (drawX + pixelSize < 0 || drawX > canvas.width ||
+          drawY + pixelSize < 0 || drawY > canvas.height) continue
+
+      ctx.fillStyle = pixel.color
+      ctx.fillRect(drawX, drawY, pixelSize, pixelSize)
     }
 
     // Draw hover indicator
@@ -127,7 +150,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       ctx.fillStyle = selectedColor + '80'
       ctx.fillRect(hx, hy, pixelSize, pixelSize)
     }
-  }, [pixels, scale, offset, hoveredPixel, selectedColor, cooldownActive, pixelMap, canvasSize])
+  }, [pixels, scale, offset, hoveredPixel, selectedColor, cooldownActive, canvasSize])
 
   // Get pixel coords from event
   const getPixelCoords = (clientX: number, clientY: number) => {
