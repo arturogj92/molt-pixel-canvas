@@ -100,7 +100,8 @@ export default function Home() {
         {/* Toggle sidebar button */}
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="absolute top-16 right-4 w-10 h-10 bg-gray-800 hover:bg-gray-700 rounded-lg flex items-center justify-center text-white z-10"
+          className="absolute top-16 right-4 w-10 h-10 bg-gray-800 hover:bg-gray-700 rounded-lg flex items-center justify-center text-white z-50 cursor-pointer"
+          style={{ pointerEvents: 'auto' }}
         >
           {sidebarOpen ? '→' : '←'}
         </button>
