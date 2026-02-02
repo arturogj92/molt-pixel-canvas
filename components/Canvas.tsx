@@ -3,11 +3,17 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from '@/lib/constants'
 
+const TILE_SIZE = 100
+const TILES_X = Math.ceil(CANVAS_WIDTH / TILE_SIZE)
+const TILES_Y = Math.ceil(CANVAS_HEIGHT / TILE_SIZE)
+
 export default function Canvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const offscreenRef = useRef<HTMLCanvasElement | null>(null)
   const offscreenCtxRef = useRef<CanvasRenderingContext2D | null>(null)
+  const loadedTilesRef = useRef<Set<string>>(new Set())
+  const loadingTilesRef = useRef<Set<string>>(new Set())
   
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
@@ -17,9 +23,8 @@ export default function Canvas() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 400, height: 400 })
   const [initialized, setInitialized] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [loadProgress, setLoadProgress] = useState(0)
-  const [lastUpdate, setLastUpdate] = useState(0)
+  const [tilesLoaded, setTilesLoaded] = useState(0)
+  const [renderTrigger, setRenderTrigger] = useState(0)
 
   // Initialize offscreen canvas
   useEffect(() => {
@@ -37,63 +42,89 @@ export default function Canvas() {
     }
   }, [])
 
-  // Load canvas from compact format
-  const loadCanvas = useCallback(async () => {
+  // Load a single tile
+  const loadTile = useCallback(async (tileX: number, tileY: number) => {
+    const key = `${tileX},${tileY}`
+    if (loadedTilesRef.current.has(key) || loadingTilesRef.current.has(key)) return
+    
+    loadingTilesRef.current.add(key)
     const ctx = offscreenCtxRef.current
     if (!ctx) return
 
     try {
-      setLoadProgress(0)
-      const res = await fetch(`/api/canvas/compact?t=${Date.now()}`)
+      const res = await fetch(`/api/tiles/${tileX}/${tileY}`)
       const text = await res.text()
       
       if (!text || text.startsWith('{')) {
-        // Error or empty
-        setLoading(false)
+        loadedTilesRef.current.add(key)
+        loadingTilesRef.current.delete(key)
         return
       }
 
-      // Clear to white first
+      // Fill tile with white first
+      const startX = tileX * TILE_SIZE
+      const startY = tileY * TILE_SIZE
       ctx.fillStyle = '#FFFFFF'
-      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+      ctx.fillRect(startX, startY, TILE_SIZE, TILE_SIZE)
 
-      // Parse compact format: "x,y,colorIdx;x,y,colorIdx;..."
+      // Parse and draw pixels
       const pixels = text.split(';').filter(p => p)
-      const total = pixels.length
-      
-      // Process in chunks to not block UI
-      const CHUNK = 50000
-      for (let i = 0; i < pixels.length; i += CHUNK) {
-        const chunk = pixels.slice(i, i + CHUNK)
-        
-        for (const p of chunk) {
-          const [x, y, c] = p.split(',').map(Number)
-          if (!isNaN(x) && !isNaN(y) && !isNaN(c)) {
-            ctx.fillStyle = COLORS[c] || '#FFFFFF'
-            ctx.fillRect(x, y, 1, 1)
-          }
+      for (const p of pixels) {
+        const [lx, ly, c] = p.split(',').map(Number)
+        if (!isNaN(lx) && !isNaN(ly) && !isNaN(c)) {
+          ctx.fillStyle = COLORS[c] || '#FFFFFF'
+          ctx.fillRect(startX + lx, startY + ly, 1, 1)
         }
-        
-        setLoadProgress(Math.min(100, Math.round((i + chunk.length) / total * 100)))
-        
-        // Yield to UI
-        await new Promise(r => setTimeout(r, 0))
       }
 
-      setLoading(false)
-      setLastUpdate(Date.now())
+      loadedTilesRef.current.add(key)
+      loadingTilesRef.current.delete(key)
+      setTilesLoaded(prev => prev + 1)
+      setRenderTrigger(prev => prev + 1)
     } catch (err) {
-      console.error('Error loading canvas:', err)
-      setLoading(false)
+      console.error(`Error loading tile ${key}:`, err)
+      loadingTilesRef.current.delete(key)
     }
   }, [])
 
-  // Initial load + periodic refresh
+  // Calculate visible tiles and load them
+  const loadVisibleTiles = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    // Calculate visible area in pixel coordinates
+    const visibleLeft = Math.max(0, Math.floor(-offset.x / scale))
+    const visibleTop = Math.max(0, Math.floor(-offset.y / scale))
+    const visibleRight = Math.min(CANVAS_WIDTH, Math.ceil((canvas.width - offset.x) / scale))
+    const visibleBottom = Math.min(CANVAS_HEIGHT, Math.ceil((canvas.height - offset.y) / scale))
+
+    // Calculate tile range
+    const tileLeft = Math.max(0, Math.floor(visibleLeft / TILE_SIZE))
+    const tileTop = Math.max(0, Math.floor(visibleTop / TILE_SIZE))
+    const tileRight = Math.min(TILES_X - 1, Math.floor(visibleRight / TILE_SIZE))
+    const tileBottom = Math.min(TILES_Y - 1, Math.floor(visibleBottom / TILE_SIZE))
+
+    // Load visible tiles
+    for (let ty = tileTop; ty <= tileBottom; ty++) {
+      for (let tx = tileLeft; tx <= tileRight; tx++) {
+        loadTile(tx, ty)
+      }
+    }
+  }, [offset, scale, loadTile])
+
+  // Load tiles when view changes
   useEffect(() => {
-    loadCanvas()
-    const interval = setInterval(loadCanvas, 10000) // Refresh every 10s
+    loadVisibleTiles()
+  }, [loadVisibleTiles])
+
+  // Refresh tiles periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadedTilesRef.current.clear()
+      loadVisibleTiles()
+    }, 15000)
     return () => clearInterval(interval)
-  }, [loadCanvas])
+  }, [loadVisibleTiles])
 
   // Resize handling
   useEffect(() => {
@@ -105,13 +136,11 @@ export default function Canvas() {
         setCanvasSize({ width: newWidth, height: newHeight })
         
         if (!initialized) {
-          const centerX = CANVAS_WIDTH / 2
-          const centerY = CANVAS_HEIGHT / 2
           const initialScale = Math.min(newWidth / CANVAS_WIDTH, newHeight / CANVAS_HEIGHT) * 0.9
           setScale(initialScale)
           setOffset({
-            x: newWidth / 2 - centerX * initialScale,
-            y: newHeight / 2 - centerY * initialScale
+            x: newWidth / 2 - (CANVAS_WIDTH / 2) * initialScale,
+            y: newHeight / 2 - (CANVAS_HEIGHT / 2) * initialScale
           })
           setInitialized(true)
         }
@@ -125,9 +154,10 @@ export default function Canvas() {
   // Fullscreen
   useEffect(() => {
     const handler = () => {
-      const isFs = !!document.fullscreenElement
-      setIsFullscreen(isFs)
-      if (isFs) setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
+      setIsFullscreen(!!document.fullscreenElement)
+      if (document.fullscreenElement) {
+        setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
+      }
     }
     document.addEventListener('fullscreenchange', handler)
     return () => document.removeEventListener('fullscreenchange', handler)
@@ -150,7 +180,6 @@ export default function Canvas() {
     const srcY = Math.max(0, Math.floor(-offset.y / scale))
     const srcW = Math.min(CANVAS_WIDTH - srcX, Math.ceil(canvas.width / scale) + 2)
     const srcH = Math.min(CANVAS_HEIGHT - srcY, Math.ceil(canvas.height / scale) + 2)
-
     const dstX = Math.floor(srcX * scale + offset.x)
     const dstY = Math.floor(srcY * scale + offset.y)
     const dstW = Math.floor(srcW * scale)
@@ -160,19 +189,18 @@ export default function Canvas() {
       ctx.drawImage(offscreen, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH)
     }
 
+    // Grid at high zoom
     if (scale >= 10) {
       ctx.strokeStyle = 'rgba(0,0,0,0.15)'
       ctx.lineWidth = 1
       ctx.beginPath()
       for (let x = srcX; x <= srcX + srcW; x++) {
         const drawX = Math.floor(x * scale + offset.x)
-        ctx.moveTo(drawX, dstY)
-        ctx.lineTo(drawX, dstY + dstH)
+        ctx.moveTo(drawX, dstY); ctx.lineTo(drawX, dstY + dstH)
       }
       for (let y = srcY; y <= srcY + srcH; y++) {
         const drawY = Math.floor(y * scale + offset.y)
-        ctx.moveTo(dstX, drawY)
-        ctx.lineTo(dstX + dstW, drawY)
+        ctx.moveTo(dstX, drawY); ctx.lineTo(dstX + dstW, drawY)
       }
       ctx.stroke()
     }
@@ -180,21 +208,19 @@ export default function Canvas() {
     if (hoveredPixel) {
       const hx = Math.floor(hoveredPixel.x * scale + offset.x)
       const hy = Math.floor(hoveredPixel.y * scale + offset.y)
-      const hs = Math.floor(scale)
-      ctx.strokeStyle = '#E50000'
-      ctx.lineWidth = 2
-      ctx.strokeRect(hx, hy, hs, hs)
+      ctx.strokeStyle = '#E50000'; ctx.lineWidth = 2
+      ctx.strokeRect(hx, hy, Math.floor(scale), Math.floor(scale))
     }
-  }, [scale, offset, hoveredPixel, canvasSize, lastUpdate])
+  }, [scale, offset, hoveredPixel, canvasSize, renderTrigger])
 
+  // Input handlers
   const getPixelCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     const x = Math.floor((clientX - rect.left - offset.x) / scale)
     const y = Math.floor((clientY - rect.top - offset.y) / scale)
-    if (x >= 0 && x < CANVAS_WIDTH && y >= 0 && y < CANVAS_HEIGHT) return { x, y }
-    return null
+    return (x >= 0 && x < CANVAS_WIDTH && y >= 0 && y < CANVAS_HEIGHT) ? { x, y } : null
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -236,20 +262,18 @@ export default function Canvas() {
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
       const newDist = Math.hypot(dx, dy)
-      const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2
-      const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2
       const canvas = canvasRef.current
       if (canvas) {
         const rect = canvas.getBoundingClientRect()
-        const touchX = centerX - rect.left
-        const touchY = centerY - rect.top
-        const pixelX = (touchX - offset.x) / scale
-        const pixelY = (touchY - offset.y) / scale
-        const newScale = Math.max(0.5, Math.min(100, scale * (newDist / lastTouchRef.current.dist)))
-        setScale(newScale)
-        setOffset({ x: touchX - pixelX * newScale, y: touchY - pixelY * newScale })
+        const tx = cx - rect.left, ty = cy - rect.top
+        const px = (tx - offset.x) / scale, py = (ty - offset.y) / scale
+        const ns = Math.max(0.5, Math.min(100, scale * (newDist / lastTouchRef.current.dist)))
+        setScale(ns)
+        setOffset({ x: tx - px * ns, y: ty - py * ns })
       }
-      lastTouchRef.current = { x: centerX, y: centerY, dist: newDist }
+      lastTouchRef.current = { x: cx, y: cy, dist: newDist }
     }
     e.preventDefault()
   }
@@ -259,33 +283,26 @@ export default function Canvas() {
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    const pixelX = (mouseX - offset.x) / scale
-    const pixelY = (mouseY - offset.y) / scale
-    const newScale = Math.max(0.5, Math.min(100, scale * (e.deltaY > 0 ? 0.97 : 1.03)))
-    setScale(newScale)
-    setOffset({ x: mouseX - pixelX * newScale, y: mouseY - pixelY * newScale })
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top
+    const px = (mx - offset.x) / scale, py = (my - offset.y) / scale
+    const ns = Math.max(0.5, Math.min(100, scale * (e.deltaY > 0 ? 0.97 : 1.03)))
+    setScale(ns)
+    setOffset({ x: mx - px * ns, y: my - py * ns })
   }, [scale, offset])
 
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const prevent = (e: WheelEvent | TouchEvent) => e.preventDefault()
-    container.addEventListener('wheel', prevent, { passive: false })
-    container.addEventListener('touchmove', prevent, { passive: false })
-    return () => {
-      container.removeEventListener('wheel', prevent)
-      container.removeEventListener('touchmove', prevent)
-    }
+    const c = containerRef.current
+    if (!c) return
+    const prevent = (e: Event) => e.preventDefault()
+    c.addEventListener('wheel', prevent, { passive: false })
+    c.addEventListener('touchmove', prevent, { passive: false })
+    return () => { c.removeEventListener('wheel', prevent); c.removeEventListener('touchmove', prevent) }
   }, [])
 
-  const centerView = () => {
-    setOffset({
-      x: canvasSize.width / 2 - (CANVAS_WIDTH / 2) * scale,
-      y: canvasSize.height / 2 - (CANVAS_HEIGHT / 2) * scale
-    })
-  }
+  const centerView = () => setOffset({
+    x: canvasSize.width / 2 - (CANVAS_WIDTH / 2) * scale,
+    y: canvasSize.height / 2 - (CANVAS_HEIGHT / 2) * scale
+  })
 
   return (
     <div ref={containerRef} className={`relative overflow-hidden bg-gray-900 touch-none ${isFullscreen ? 'w-screen h-screen' : 'w-full h-full'}`} onContextMenu={e => e.preventDefault()}>
@@ -305,20 +322,16 @@ export default function Canvas() {
         onTouchEnd={() => { setIsDragging(false); lastTouchRef.current = null }}
       />
 
-      {loading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90">
-          <div className="text-white text-lg mb-4">Loading 1M pixels...</div>
-          <div className="w-64 h-2 bg-gray-700 rounded-full overflow-hidden">
-            <div className="h-full bg-blue-500 transition-all" style={{ width: `${loadProgress}%` }} />
-          </div>
-          <div className="text-gray-400 text-sm mt-2">{loadProgress}%</div>
-        </div>
-      )}
+      {/* Loading indicator */}
+      <div className="absolute top-4 right-4 px-3 py-1.5 bg-gray-800/90 rounded text-white text-sm">
+        Tiles: {tilesLoaded}/100
+      </div>
       
+      {/* Controls */}
       <div className="absolute bottom-4 right-4 flex gap-2">
-        <button onClick={() => { const s = Math.max(0.5, scale * 0.8); const cx = canvasSize.width/2, cy = canvasSize.height/2; setOffset({x: cx - ((cx-offset.x)/scale)*s, y: cy - ((cy-offset.y)/scale)*s}); setScale(s) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">−</button>
+        <button onClick={() => { const s = Math.max(0.5, scale*0.8), cx = canvasSize.width/2, cy = canvasSize.height/2, px = (cx-offset.x)/scale, py = (cy-offset.y)/scale; setScale(s); setOffset({x:cx-px*s, y:cy-py*s}) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">−</button>
         <span className="w-16 h-12 bg-gray-800/90 rounded-lg text-white text-sm flex items-center justify-center font-mono">{scale.toFixed(1)}x</span>
-        <button onClick={() => { const s = Math.min(100, scale * 1.25); const cx = canvasSize.width/2, cy = canvasSize.height/2; setOffset({x: cx - ((cx-offset.x)/scale)*s, y: cy - ((cy-offset.y)/scale)*s}); setScale(s) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">+</button>
+        <button onClick={() => { const s = Math.min(100, scale*1.25), cx = canvasSize.width/2, cy = canvasSize.height/2, px = (cx-offset.x)/scale, py = (cy-offset.y)/scale; setScale(s); setOffset({x:cx-px*s, y:cy-py*s}) }} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-2xl font-bold">+</button>
         <button onClick={centerView} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg">⊙</button>
         <button onClick={() => containerRef.current && (document.fullscreenElement ? document.exitFullscreen() : containerRef.current.requestFullscreen())} className="w-12 h-12 bg-gray-800/90 hover:bg-gray-700 rounded-lg text-white text-lg hidden sm:flex items-center justify-center">{isFullscreen ? '✕' : '⛶'}</button>
       </div>
