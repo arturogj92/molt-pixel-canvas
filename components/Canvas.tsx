@@ -20,6 +20,10 @@ interface CanvasProps {
 export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownActive }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null)
+  const offscreenCtxRef = useRef<CanvasRenderingContext2D | null>(null)
+  const lastPixelsRef = useRef<Map<string, string>>(new Map())
+  
   const [scale, setScale] = useState(2)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -28,8 +32,57 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [canvasSize, setCanvasSize] = useState({ width: 400, height: 400 })
   const [initialized, setInitialized] = useState(false)
-  
-  // Resize canvas to fit container and center on load
+
+  // Initialize offscreen canvas once
+  useEffect(() => {
+    if (!offscreenRef.current) {
+      const offscreen = document.createElement('canvas')
+      offscreen.width = CANVAS_WIDTH
+      offscreen.height = CANVAS_HEIGHT
+      const ctx = offscreen.getContext('2d', { alpha: false })
+      if (ctx) {
+        // Fill with white initially
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+        offscreenCtxRef.current = ctx
+      }
+      offscreenRef.current = offscreen
+    }
+  }, [])
+
+  // Update offscreen canvas when pixels change (INCREMENTAL - only changed pixels)
+  useEffect(() => {
+    const ctx = offscreenCtxRef.current
+    if (!ctx) return
+
+    const currentPixels = new Map<string, string>()
+    
+    // Build current state and detect changes
+    for (const pixel of pixels) {
+      const key = `${pixel.x},${pixel.y}`
+      currentPixels.set(key, pixel.color)
+      
+      const lastColor = lastPixelsRef.current.get(key)
+      if (lastColor !== pixel.color) {
+        // This pixel changed - update it
+        ctx.fillStyle = pixel.color
+        ctx.fillRect(pixel.x, pixel.y, 1, 1)
+      }
+    }
+
+    // Check for pixels that were removed (set back to white)
+    for (const [key, _color] of lastPixelsRef.current) {
+      if (!currentPixels.has(key)) {
+        const [x, y] = key.split(',').map(Number)
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillRect(x, y, 1, 1)
+      }
+    }
+
+    lastPixelsRef.current = currentPixels
+  }, [pixels])
+
+  // Resize handling
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
@@ -38,12 +91,10 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         const newHeight = rect.height || window.innerHeight
         setCanvasSize({ width: newWidth, height: newHeight })
         
-        // Center canvas on first load
         if (!initialized) {
           const centerX = CANVAS_WIDTH / 2
           const centerY = CANVAS_HEIGHT / 2
-          // Start at scale 2 minimum for visibility
-          const initialScale = Math.max(2, Math.floor(Math.min(newWidth, newHeight) / CANVAS_WIDTH * 2))
+          const initialScale = Math.max(1, Math.min(newWidth, newHeight) / CANVAS_WIDTH)
           setScale(initialScale)
           setOffset({
             x: newWidth / 2 - centerX * initialScale,
@@ -58,7 +109,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     return () => window.removeEventListener('resize', updateSize)
   }, [initialized])
 
-  // Update canvas size on fullscreen change
+  // Fullscreen handling
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isFs = !!document.fullscreenElement
@@ -67,92 +118,85 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         setCanvasSize({ width: window.innerWidth, height: window.innerHeight })
       }
     }
-
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
   }, [])
 
-  // Create pixel map for quick lookup
-  const pixelMap = useCallback(() => {
-    const map = new Map<string, string>()
-    pixels.forEach(p => map.set(`${p.x},${p.y}`, p.color))
-    return map
-  }, [pixels])
-
-  // Draw canvas - OPTIMIZED: only draw visible area + existing pixels
+  // OPTIMIZED RENDER: Draw offscreen canvas to visible canvas
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    const offscreen = offscreenRef.current
+    if (!canvas || !offscreen) return
 
-    const ctx = canvas.getContext('2d')
+    const ctx = canvas.getContext('2d', { alpha: false })
     if (!ctx) return
 
-    const pixelSize = scale
+    // Disable image smoothing for crisp pixels
+    ctx.imageSmoothingEnabled = false
 
-    // Clear with background
+    // Clear with background color
     ctx.fillStyle = '#1a1a2e'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Calculate visible bounds in pixel coordinates
-    const visibleMinX = Math.max(0, Math.floor(-offset.x / pixelSize))
-    const visibleMinY = Math.max(0, Math.floor(-offset.y / pixelSize))
-    const visibleMaxX = Math.min(CANVAS_WIDTH, Math.ceil((canvas.width - offset.x) / pixelSize))
-    const visibleMaxY = Math.min(CANVAS_HEIGHT, Math.ceil((canvas.height - offset.y) / pixelSize))
+    // Calculate source rectangle (what part of offscreen to show)
+    const srcX = Math.max(0, Math.floor(-offset.x / scale))
+    const srcY = Math.max(0, Math.floor(-offset.y / scale))
+    const srcW = Math.min(CANVAS_WIDTH - srcX, Math.ceil(canvas.width / scale) + 1)
+    const srcH = Math.min(CANVAS_HEIGHT - srcY, Math.ceil(canvas.height / scale) + 1)
 
-    // Draw white base for visible area only
-    const baseX = visibleMinX * pixelSize + offset.x
-    const baseY = visibleMinY * pixelSize + offset.y
-    const baseW = (visibleMaxX - visibleMinX) * pixelSize
-    const baseH = (visibleMaxY - visibleMinY) * pixelSize
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fillRect(baseX, baseY, baseW, baseH)
+    // Calculate destination rectangle
+    const dstX = Math.floor(srcX * scale + offset.x)
+    const dstY = Math.floor(srcY * scale + offset.y)
+    const dstW = Math.floor(srcW * scale)
+    const dstH = Math.floor(srcH * scale)
 
-    // Draw grid at high zoom (only visible area)
-    if (scale >= 8) {
-      ctx.strokeStyle = '#ddd'
-      ctx.lineWidth = 0.5
-      for (let x = visibleMinX; x <= visibleMaxX; x++) {
-        const drawX = x * pixelSize + offset.x
-        ctx.beginPath()
-        ctx.moveTo(drawX, baseY)
-        ctx.lineTo(drawX, baseY + baseH)
-        ctx.stroke()
-      }
-      for (let y = visibleMinY; y <= visibleMaxY; y++) {
-        const drawY = y * pixelSize + offset.y
-        ctx.beginPath()
-        ctx.moveTo(baseX, drawY)
-        ctx.lineTo(baseX + baseW, drawY)
-        ctx.stroke()
-      }
+    // Draw the visible portion of offscreen canvas (GPU accelerated!)
+    if (srcW > 0 && srcH > 0) {
+      ctx.drawImage(
+        offscreen,
+        srcX, srcY, srcW, srcH,  // Source rect
+        dstX, dstY, dstW, dstH   // Dest rect
+      )
     }
 
-    // Draw only existing pixels (not 1M iterations!)
-    for (const pixel of pixels) {
-      const drawX = pixel.x * pixelSize + offset.x
-      const drawY = pixel.y * pixelSize + offset.y
+    // Draw grid at high zoom levels
+    if (scale >= 10) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.2)'
+      ctx.lineWidth = 1
+      
+      const startX = Math.max(0, srcX)
+      const startY = Math.max(0, srcY)
+      const endX = Math.min(CANVAS_WIDTH, srcX + srcW + 1)
+      const endY = Math.min(CANVAS_HEIGHT, srcY + srcH + 1)
 
-      // Skip if not visible
-      if (drawX + pixelSize < 0 || drawX > canvas.width ||
-          drawY + pixelSize < 0 || drawY > canvas.height) continue
-
-      ctx.fillStyle = pixel.color
-      ctx.fillRect(drawX, drawY, pixelSize, pixelSize)
+      ctx.beginPath()
+      for (let x = startX; x <= endX; x++) {
+        const drawX = Math.floor(x * scale + offset.x)
+        ctx.moveTo(drawX, dstY)
+        ctx.lineTo(drawX, dstY + dstH)
+      }
+      for (let y = startY; y <= endY; y++) {
+        const drawY = Math.floor(y * scale + offset.y)
+        ctx.moveTo(dstX, drawY)
+        ctx.lineTo(dstX + dstW, drawY)
+      }
+      ctx.stroke()
     }
 
     // Draw hover indicator
     if (hoveredPixel && !cooldownActive) {
-      const hx = hoveredPixel.x * pixelSize + offset.x
-      const hy = hoveredPixel.y * pixelSize + offset.y
+      const hx = Math.floor(hoveredPixel.x * scale + offset.x)
+      const hy = Math.floor(hoveredPixel.y * scale + offset.y)
+      const hs = Math.floor(scale)
       ctx.strokeStyle = selectedColor
       ctx.lineWidth = 2
-      ctx.strokeRect(hx, hy, pixelSize, pixelSize)
+      ctx.strokeRect(hx, hy, hs, hs)
       ctx.fillStyle = selectedColor + '80'
-      ctx.fillRect(hx, hy, pixelSize, pixelSize)
+      ctx.fillRect(hx, hy, hs, hs)
     }
   }, [pixels, scale, offset, hoveredPixel, selectedColor, cooldownActive, canvasSize])
 
-  // Get pixel coords from event
+  // Get pixel coords from mouse position
   const getPixelCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current
     if (!canvas) return null
@@ -167,7 +211,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     return null
   }
 
-  // Mouse events
+  // Mouse handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true)
     setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
@@ -189,7 +233,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     setIsDragging(false)
   }
 
-  // Touch events for mobile
+  // Touch handlers
   const lastTouchRef = useRef<{ x: number; y: number; dist?: number } | null>(null)
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -199,7 +243,6 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       setIsDragging(true)
       setDragStart({ x: touch.clientX - offset.x, y: touch.clientY - offset.y })
     } else if (e.touches.length === 2) {
-      // Pinch zoom
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
       lastTouchRef.current = {
@@ -219,7 +262,6 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         y: touch.clientY - dragStart.y
       })
     } else if (e.touches.length === 2 && lastTouchRef.current?.dist) {
-      // Pinch zoom
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
       const newDist = Math.hypot(dx, dy)
@@ -232,30 +274,20 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         const touchX = centerX - rect.left
         const touchY = centerY - rect.top
         
-        // Calculate pixel position before zoom
         const pixelX = (touchX - offset.x) / scale
         const pixelY = (touchY - offset.y) / scale
 
-        // Calculate new scale based on pinch delta (more sensitive)
         const zoomFactor = newDist / lastTouchRef.current.dist
-        // Use floor/ceil based on direction for more responsive feel
-        let newScale: number
-        if (zoomFactor > 1) {
-          newScale = Math.min(32, Math.ceil(scale * zoomFactor))
-        } else {
-          newScale = Math.max(2, Math.floor(scale * zoomFactor))
-        }
+        const newScale = Math.max(0.5, Math.min(100, scale * zoomFactor))
 
         if (newScale !== scale) {
-          // Recalculate offset to keep same point under fingers
-          const newOffsetX = touchX - pixelX * newScale
-          const newOffsetY = touchY - pixelY * newScale
-          
           setScale(newScale)
-          setOffset({ x: newOffsetX, y: newOffsetY })
+          setOffset({
+            x: touchX - pixelX * newScale,
+            y: touchY - pixelY * newScale
+          })
         }
       }
-
       lastTouchRef.current = { x: centerX, y: centerY, dist: newDist }
     }
     e.preventDefault()
@@ -266,7 +298,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     lastTouchRef.current = null
   }
 
-  // Zoom towards mouse position
+  // Smooth zoom with wheel
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -281,11 +313,10 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const pixelX = (mouseX - offset.x) / scale
     const pixelY = (mouseY - offset.y) / scale
 
-    // Smoother zoom: multiply by factor instead of adding
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
-    const newScale = Math.max(1, Math.min(50, scale * zoomFactor))
+    const newScale = Math.max(0.5, Math.min(100, scale * zoomFactor))
 
-    if (Math.abs(newScale - scale) > 0.01) {
+    if (Math.abs(newScale - scale) > 0.001) {
       setScale(newScale)
       setOffset({
         x: mouseX - pixelX * newScale,
@@ -294,7 +325,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     }
   }, [scale, offset])
 
-  // Prevent page scroll
+  // Prevent scroll on container
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -322,7 +353,6 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     }
   }
 
-  // Center view button
   const centerView = () => {
     const centerX = CANVAS_WIDTH / 2
     const centerY = CANVAS_HEIGHT / 2
@@ -343,6 +373,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         width={canvasSize.width}
         height={canvasSize.height}
         className="cursor-grab active:cursor-grabbing touch-none"
+        style={{ imageRendering: 'pixelated' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -357,7 +388,7 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
       <div className="absolute bottom-4 right-4 flex gap-2">
         <button
           onClick={() => {
-            const newScale = Math.max(2, scale - 1)
+            const newScale = Math.max(0.5, scale * 0.8)
             const centerX = canvasSize.width / 2
             const centerY = canvasSize.height / 2
             const pixelX = (centerX - offset.x) / scale
@@ -372,12 +403,12 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         >
           −
         </button>
-        <span className="w-14 h-12 bg-gray-800/90 rounded-lg text-white text-sm flex items-center justify-center font-mono">
-          {scale}x
+        <span className="w-16 h-12 bg-gray-800/90 rounded-lg text-white text-sm flex items-center justify-center font-mono">
+          {scale.toFixed(1)}x
         </span>
         <button
           onClick={() => {
-            const newScale = Math.min(32, scale + 1)
+            const newScale = Math.min(100, scale * 1.25)
             const centerX = canvasSize.width / 2
             const centerY = canvasSize.height / 2
             const pixelX = (centerX - offset.x) / scale
@@ -408,14 +439,14 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
         </button>
       </div>
 
-      {/* Coordinates display */}
+      {/* Coordinates */}
       {hoveredPixel && (
         <div className="absolute top-4 left-4 px-3 py-1.5 bg-gray-800/90 rounded text-white text-sm font-mono">
           ({hoveredPixel.x}, {hoveredPixel.y})
         </div>
       )}
 
-      {/* Help text - hide on mobile */}
+      {/* Help */}
       <div className="absolute bottom-4 left-4 text-gray-500 text-xs hidden sm:block">
         Scroll to zoom • Drag to pan
       </div>
