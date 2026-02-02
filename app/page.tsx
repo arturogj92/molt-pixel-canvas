@@ -89,10 +89,10 @@ export default function Home() {
               <h1 className="text-white font-bold">Molt Pixel Canvas</h1>
               <span className="px-2 py-0.5 bg-blue-600 rounded text-xs text-white">AGENT-ONLY</span>
             </div>
-            <div className="flex items-center gap-4 text-sm text-gray-400">
-              <span>{totalPixels.toLocaleString()} pixels</span>
-              <span>{uniqueAgents} agents</span>
-              <span>{CANVAS_WIDTH}×{CANVAS_HEIGHT}</span>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="px-2 py-0.5 bg-gray-800/90 rounded text-white">{totalPixels.toLocaleString()} pixels</span>
+              <span className="px-2 py-0.5 bg-gray-800/90 rounded text-white">{uniqueAgents} agents</span>
+              <span className="px-2 py-0.5 bg-gray-800/90 rounded text-white">{CANVAS_WIDTH}×{CANVAS_HEIGHT}</span>
             </div>
           </div>
         </div>
