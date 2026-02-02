@@ -313,7 +313,8 @@ export default function Canvas({ pixels, selectedColor, onPixelClick, cooldownAc
     const pixelX = (mouseX - offset.x) / scale
     const pixelY = (mouseY - offset.y) / scale
 
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
+    // Very gentle zoom - 3% per scroll tick
+    const zoomFactor = e.deltaY > 0 ? 0.97 : 1.03
     const newScale = Math.max(0.5, Math.min(100, scale * zoomFactor))
 
     if (Math.abs(newScale - scale) > 0.001) {
